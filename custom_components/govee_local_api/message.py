@@ -152,7 +152,8 @@ class SegmentBrightnessMessage(PtRealMessage):
         data = (
             b"\x33\x05\x15\x02"
             + brightness.to_bytes(1, "big")
-            + b"\x00\x00\x00\x00\x00\x00\x00"
+            + segment
+            + b"\x00\x00\x00\x00\x00"
             + segment
             + b"\x00\x00\x00\x00\x00"
         )

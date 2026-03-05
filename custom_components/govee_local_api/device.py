@@ -130,15 +130,34 @@ class GoveeDevice:
         blue: int,
         brightness: int | None = None,
     ) -> None:
-        rgb: tuple[int, int, int] = (red, green, blue)
-        await self._controller.set_segment_rgb_color(self, segment, rgb)
         if 0 < segment <= len(self._segments):
-            self._segments[segment - 1].color = rgb
-            self._segments[segment - 1].is_on = rgb != (0, 0, 0)
-            self._segments[segment - 1].temperature = 0
             if brightness is not None:
                 self._segments[segment - 1].brightness = brightness
-                await self._controller.set_segment_brightness(self, segment, brightness)
+            
+            s_brightness = self._segments[segment - 1].brightness
+            s_red = int(red * s_brightness / 100)
+            s_green = int(green * s_brightness / 100)
+            s_blue = int(blue * s_brightness / 100)
+            
+            rgb: tuple[int, int, int] = (s_red, s_green, s_blue)
+            await self._controller.set_segment_rgb_color(self, segment, rgb)
+            
+            self._segments[segment - 1].color = (red, green, blue)
+            self._segments[segment - 1].is_on = (red, green, blue) != (0, 0, 0)
+            self._segments[segment - 1].temperature = 0
+            
+            await self._controller.set_segment_brightness(self, segment, s_brightness)
+            
+            # Logic: If any segment is off, the whole lamp is considered off in HA
+            # If all segments are on, the whole lamp is considered on in HA
+            all_on = all(s.is_on for s in self._segments)
+            any_off = any(not s.is_on for s in self._segments)
+            
+            if any_off:
+                self._is_on = False
+            elif all_on:
+                self._is_on = True
+                
             if self._update_callback and callable(self._update_callback):
                 self._update_callback(self)
 
@@ -153,6 +172,11 @@ class GoveeDevice:
             if brightness is not None:
                 self._segments[segment - 1].brightness = brightness
                 await self._controller.set_segment_brightness(self, segment, brightness)
+            
+            # Check if all segments are now on
+            if all(s.is_on for s in self._segments):
+                self._is_on = True
+                
             if self._update_callback and callable(self._update_callback):
                 self._update_callback(self)
 
