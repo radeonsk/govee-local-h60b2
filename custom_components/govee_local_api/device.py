@@ -146,16 +146,14 @@ class GoveeDevice:
         """Apply the global state using the new workaround logic."""
         any_segment_on = any(s.is_on for s in self._segments)
 
-        if not any_segment_on:
-            # If NO segments are on, we send a Master OFF to turn everything off cleanly.
-            await self._controller.turn_on_off(self, False)
-            self._is_on = False
-            return
-
         # As a workaround for turning off segments: 
         # We send a Master OFF to turn everything off cleanly.
         await self._controller.turn_on_off(self, False)
         await asyncio.sleep(0.1)
+
+        if not any_segment_on:
+            self._is_on = False
+            return
 
         self._is_on = True
         
@@ -182,7 +180,7 @@ class GoveeDevice:
         self._is_on = False
         for segment in self._segments:
             segment.is_on = False
-        await self._sync_physical_device()
+        await self._controller.turn_on_off(self, False)
         self._trigger_update_callbacks()
 
     async def set_brightness(self, value: int) -> None:
@@ -227,62 +225,68 @@ class GoveeDevice:
     async def set_segment_rgb_color(self, segment_index: int, red: int, green: int, blue: int, brightness: int | None = None) -> None:
         if 0 < segment_index <= len(self._segments):
             seg = self._segments[segment_index - 1]
+            
+            if brightness == 0 or (red, green, blue) == (0, 0, 0):
+                await self.turn_segment_off(segment_index)
+                return
+
             if brightness is not None:
                 seg.brightness = brightness
             
-            is_on = (red, green, blue) != (0, 0, 0)
-            seg.is_on = is_on
-            if is_on:
-                seg.color = (red, green, blue)
-                seg.temperature = 0
-                self._is_on = True
-                
-                # Wake up if needed
-                if not self._is_on:
-                    await self._controller.turn_on_off(self, True)
-                    await asyncio.sleep(0.1)
-                
-                # Only send to THIS segment to prevent turning others on
-                await self._send_segment_physical_state(segment_index)
+            seg.color = (red, green, blue)
+            seg.temperature = 0
+            seg.is_on = True
+            
+            was_off = not self._is_on
+            self._is_on = True
+            
+            if was_off:
+                # If waking up, sync all to ensure other segments stay off
+                await self._sync_physical_device()
             else:
-                await self._sync_physical_device() # Use wipe workaround for turning off
+                await self._send_segment_physical_state(segment_index)
             
             self._trigger_update_callbacks()
 
     async def set_segment_temperature(self, segment_index: int, temperature: int, brightness: int | None = None) -> None:
         if 0 < segment_index <= len(self._segments):
             seg = self._segments[segment_index - 1]
+            
+            if brightness == 0:
+                await self.turn_segment_off(segment_index)
+                return
+
             seg.temperature = temperature
             seg.color = (255, 255, 255)
             seg.is_on = True
-            self._is_on = True
             
             if brightness is not None:
                 seg.brightness = brightness
             
-            # Wake up if needed
-            if not self._is_on:
-                await self._controller.turn_on_off(self, True)
-                await asyncio.sleep(0.1)
-                
-            # Only send to THIS segment
-            await self._send_segment_physical_state(segment_index)
+            was_off = not self._is_on
+            self._is_on = True
+            
+            if was_off:
+                # If waking up, sync all to ensure other segments stay off
+                await self._sync_physical_device()
+            else:
+                await self._send_segment_physical_state(segment_index)
             
             self._trigger_update_callbacks()
 
     async def turn_segment_on(self, segment_index: int) -> None:
         if 0 < segment_index <= len(self._segments):
             self._segments[segment_index - 1].is_on = True
+            
+            was_off = not self._is_on
             self._is_on = True
             
-            # Wake up if needed
-            if not self._is_on:
-                await self._controller.turn_on_off(self, True)
-                await asyncio.sleep(0.1)
+            if was_off:
+                # If waking up, sync all to ensure other segments stay off
+                await self._sync_physical_device()
+            else:
+                await self._send_segment_physical_state(segment_index)
                 
-            # Only send to THIS segment
-            await self._send_segment_physical_state(segment_index)
-            
             self._trigger_update_callbacks()
 
     async def turn_segment_off(self, segment_index: int) -> None:
