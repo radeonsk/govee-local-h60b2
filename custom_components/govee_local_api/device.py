@@ -59,6 +59,7 @@ class GoveeDevice:
             GoveeSegment(False, (255, 255, 255))
             for _ in range(capabilities.segments_count)
         ]
+        self._initial_update_done = False
 
     @property
     def controller(self):
@@ -218,17 +219,18 @@ class GoveeDevice:
             self._rgb_color = message.color
         self._temperature_color = message.color_temperature
         
-        # Sync segments with master state during updates (initialization/polling)
-        # We do this because the Govee API does not report individual segment status.
-        for segment in self._segments:
-            segment.is_on = self._is_on
-            segment.brightness = self._brightness
-            if self._temperature_color > 0:
-                segment.temperature = self._temperature_color
-                segment.color = (255, 255, 255)
-            else:
-                segment.color = self._rgb_color
-                segment.temperature = 0
+        # Sync segments with master state only during initialization
+        if not self._initial_update_done:
+            for segment in self._segments:
+                segment.is_on = self._is_on
+                segment.brightness = self._brightness
+                if self._temperature_color > 0:
+                    segment.temperature = self._temperature_color
+                    segment.color = (255, 255, 255)
+                else:
+                    segment.color = self._rgb_color
+                    segment.temperature = 0
+            self._initial_update_done = True
                 
         self.update_lastseen()
         self._trigger_update_callbacks()

@@ -456,23 +456,17 @@ class GoveeController(asyncio.DatagramProtocol):
                             device._rgb_color = (payload[3], payload[4], payload[5])
                             device._temperature_color = 0
                     
-                    # Force a segment sync and UI update
+                    # Force a UI update for the master lamp
                     device.update_lastseen()
-                    # Trigger the update logic we already have in device.py
-                    # We can call device.update with a dummy or refactor
-                    # For now, let's just trigger the callback
-                    for segment in device._segments:
-                        segment.is_on = device._is_on
-                        segment.brightness = device._brightness
-                        if device._temperature_color > 0:
-                            segment.temperature = device._temperature_color
-                            segment.color = (255, 255, 255)
-                        else:
-                            segment.color = device._rgb_color
-                            segment.temperature = 0
+                    
+                    # NOTE: We no longer force-sync segments here to allow independent control.
+                    # The master lamp and segments will each trigger their own UI updates via the callback list.
 
                     if device._update_callback and callable(device._update_callback):
                         device._update_callback(device)
+                    
+                    # Trigger the new multi-callback system
+                    device._trigger_update_callbacks()
             except Exception as e:
                 self._logger.error("Failed to parse passthrough status from %s: %s", addr, e)
 
