@@ -1,7 +1,7 @@
 {
   "domain": "govee_local_api",
   "name": "Govee Local API",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "documentation": "https://github.com/Galorhallen/govee-local-api",
   "dependencies": [],
   "codeowners": [

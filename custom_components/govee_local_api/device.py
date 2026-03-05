@@ -157,6 +157,10 @@ class GoveeDevice:
             await self._controller.set_segment_rgb_color(self, segment, rgb)
             await self._controller.set_segment_brightness(self, segment, s_brightness)
 
+            # Turning on a segment also updates the Master state to ON
+            if seg.is_on:
+                self._is_on = True
+
             self._trigger_update_callbacks()
 
     async def set_segment_temperature(
@@ -172,6 +176,9 @@ class GoveeDevice:
 
             await self._controller.set_segment_color_temperature(self, segment, temperature)
             await self._controller.set_segment_brightness(self, segment, seg.brightness)
+
+            # Turning on a segment also updates the Master state to ON
+            self._is_on = True
 
             self._trigger_update_callbacks()
 
@@ -227,26 +234,16 @@ class GoveeDevice:
         await self._controller.send_raw_command(self, command)
 
     def update(self, message: DevStatusResponse) -> None:
-        # Check if the global state has changed from what we currently think it is
-        # This allows us to detect external changes (Govee app, physical button)
-        power_changed = self._is_on != message.is_on
-        brightness_changed = self._brightness != message.brightness
-        # Color change check (ignoring black reports)
-        color_changed = False
-        if message.color != (0, 0, 0) and self._rgb_color != message.color:
-            color_changed = True
-        temp_changed = self._temperature_color != message.color_temperature
-        
-        # Update master state
+        # Update master state only
         self._is_on = message.is_on
         self._brightness = message.brightness
         if message.color != (0, 0, 0):
             self._rgb_color = message.color
         self._temperature_color = message.color_temperature
         
-        # If this is the first update, or if a global change was detected externally,
-        # synchronize all segments to match the new global state.
-        if not self._initial_update_done or power_changed or brightness_changed or color_changed or temp_changed:
+        # Sync segments with master state ONLY during the first initialization update.
+        # After that, segments are independent during polling to prevent overwriting manual settings.
+        if not self._initial_update_done:
             for segment in self._segments:
                 segment.is_on = self._is_on
                 segment.brightness = self._brightness
