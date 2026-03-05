@@ -123,8 +123,8 @@ class GoveeDevice:
         
         # Power State logic
         if not seg.is_on:
-            await self._controller.set_segment_brightness(self, i, 0)
-            return
+            # Turn off segment by setting it to black and 0 brightness
+            await self._controller.set_segment_rgb_color(self, i, (0, 0, 0))
 
         # Color/Temperature
         if seg.temperature > 0:
