@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from typing import Any, TypeVar
@@ -149,12 +150,13 @@ class SegmentColorTemperatureMessage(PtRealMessage):
 
 class SegmentBrightnessMessage(PtRealMessage):
     def __init__(self, segment: bytes, brightness: int) -> None:
-        # Improved offsets for H60B2 brightness: intensity at 4, mask at 5
+        # Standard RGBIC offset for brightness mask at 12
         data = (
             b"\x33\x05\x15\x02"
             + brightness.to_bytes(1, "big")
+            + b"\x00\x00\x00\x00\x00\x00\x00"
             + segment
-            + b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+            + b"\x00\x00\x00\x00\x00"
         )
         super().__init__([data])
 

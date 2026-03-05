@@ -117,56 +117,9 @@ class GoveeDevice:
             if callable(callback):
                 callback(self)
 
-    async def _send_segment_state(self, segment_index: int) -> None:
-        """Send the current state of a single segment to the physical device."""
-        seg = self._segments[segment_index - 1]
-        target_brightness = seg.brightness if seg.is_on else 0
-        
-        if seg.temperature > 0:
-            await self._controller.set_segment_color_temperature(self, segment_index, seg.temperature)
-        else:
-            # Scale RGB by segment's own brightness as fallback
-            s_red = int(seg.color[0] * target_brightness / 100)
-            s_green = int(seg.color[1] * target_brightness / 100)
-            s_blue = int(seg.color[2] * target_brightness / 100)
-            
-            if not seg.is_on:
-                await self._controller.set_segment_rgb_color(self, segment_index, (0, 0, 0))
-            else:
-                if (s_red, s_green, s_blue) == (0, 0, 0) and seg.color != (0, 0, 0):
-                    s_red = s_green = s_blue = 1
-                await self._controller.set_segment_rgb_color(self, segment_index, (s_red, s_green, s_blue))
-        
-        await asyncio.sleep(0.05)
-        await self._controller.set_segment_brightness(self, segment_index, target_brightness)
-
-    async def _sync_all_segments(self) -> None:
-        """Synchronize all segments with the physical device, ensuring master brightness is at 100% to allow independence."""
-        # Ensure the physical master brightness is at 100% so it doesn't throttle our individual segments
-        await self._controller.set_brightness(self, 100)
-        await asyncio.sleep(0.05)
-        
-        for i in range(1, len(self._segments) + 1):
-            await self._send_segment_state(i)
-            await asyncio.sleep(0.05)
-
     async def turn_on(self) -> None:
         await self._controller.turn_on_off(self, True)
-        await asyncio.sleep(0.1)
-        # For Master turn_on, we use 100% physical brightness to allow segment independence
-        await self._controller.set_brightness(self, 100)
-        await asyncio.sleep(0.1)
-        
-        if self._temperature_color > 0:
-            await self._controller.set_color(self, temperature=self._temperature_color, rgb=None)
-        else:
-            await self._controller.set_color(self, rgb=self._rgb_color, temperature=None)
-            
         self._is_on = True
-        self._brightness = 100
-        for segment in self._segments:
-            segment.is_on = True
-            segment.brightness = 100
         self._trigger_update_callbacks()
 
     async def set_segment_rgb_color(
@@ -182,25 +135,18 @@ class GoveeDevice:
             if brightness is not None:
                 seg.brightness = brightness
 
-            is_turning_on = (red, green, blue) != (0, 0, 0)
-
             # Wake up if needed
-            if is_turning_on and not self._is_on:
+            if not self._is_on and (red, green, blue) != (0, 0, 0):
                 await self._controller.turn_on_off(self, True)
-                await asyncio.sleep(0.1)
                 self._is_on = True
 
-            if is_turning_on:
-                seg.color = (red, green, blue)
-                seg.temperature = 0
-                seg.is_on = True
-            else:
-                seg.is_on = False
+            seg.color = (red, green, blue)
+            seg.temperature = 0
+            seg.is_on = (red, green, blue) != (0, 0, 0)
 
-            await self._sync_all_segments()
-
-            if any(s.is_on for s in self._segments):
-                self._is_on = True
+            await self._controller.set_segment_rgb_color(self, segment, seg.color)
+            await asyncio.sleep(0.05)
+            await self._controller.set_segment_brightness(self, segment, seg.brightness)
 
             self._trigger_update_callbacks()
 
@@ -218,75 +164,56 @@ class GoveeDevice:
             # Wake up if needed
             if not self._is_on:
                 await self._controller.turn_on_off(self, True)
-                await asyncio.sleep(0.1)
                 self._is_on = True
 
-            await self._sync_all_segments()
+            await self._controller.set_segment_color_temperature(self, segment, temperature)
+            await asyncio.sleep(0.05)
+            await self._controller.set_segment_brightness(self, segment, seg.brightness)
 
-            self._is_on = True
             self._trigger_update_callbacks()
 
     async def turn_segment_on(self, segment_index: int) -> None:
         if 0 < segment_index <= len(self._segments):
             seg = self._segments[segment_index - 1]
-            seg.is_on = True
-            await self._sync_all_segments()
+            if seg.temperature > 0:
+                await self.set_segment_temperature(segment_index, seg.temperature)
+            else:
+                await self.set_segment_rgb_color(segment_index, *seg.color)
 
     async def turn_segment_off(self, segment_index: int) -> None:
         if 0 < segment_index <= len(self._segments):
             seg = self._segments[segment_index - 1]
             seg.is_on = False
-            await self._sync_all_segments()
+            # To turn off segment, set color black and brightness 0
+            await self._controller.set_segment_rgb_color(self, segment_index, (0, 0, 0))
+            await asyncio.sleep(0.05)
+            await self._controller.set_segment_brightness(self, segment_index, 0)
+            self._trigger_update_callbacks()
 
     async def turn_off(self) -> None:
         await self._controller.turn_on_off(self, False)
         self._is_on = False
+        # Sync UI only
         for segment in self._segments:
             segment.is_on = False
         self._trigger_update_callbacks()
 
     async def set_brightness(self, value: int) -> None:
-        # Virtual master brightness - propagates to all segments
+        await self._controller.set_brightness(self, value)
         self._brightness = value
-        for segment in self._segments:
-            segment.brightness = value
-        
-        if self._is_on:
-            await self._sync_all_segments()
-        else:
-            self._trigger_update_callbacks()
+        self._trigger_update_callbacks()
 
     async def set_rgb_color(self, red: int, green: int, blue: int) -> None:
         rgb = (red, green, blue)
+        await self._controller.set_color(self, rgb=rgb, temperature=None)
         self._rgb_color = rgb
         self._temperature_color = 0
-        for segment in self._segments:
-            segment.color = rgb
-            segment.temperature = 0
-            segment.is_on = True
-        
-        if self._is_on:
-            await self._sync_all_segments()
-        else:
-            self._trigger_update_callbacks()
+        self._trigger_update_callbacks()
 
     async def set_temperature(self, temperature: int) -> None:
+        await self._controller.set_color(self, temperature=temperature, rgb=None)
         self._temperature_color = temperature
-        for segment in self._locally_set_temperature(temperature):
-            pass # Helper logic or just loop
-        for segment in self._segments:
-            segment.temperature = temperature
-            segment.color = (255, 255, 255)
-            segment.is_on = True
-            
-        if self._is_on:
-            await self._sync_all_segments()
-        else:
-            self._trigger_update_callbacks()
-
-    def _locally_set_temperature(self, temperature: int):
-        # Dummy to avoid errors while refactoring
-        return []
+        self._trigger_update_callbacks()
 
     async def set_scene(self, scene: str) -> None:
         await self._controller.set_scene(self, scene)
@@ -295,21 +222,11 @@ class GoveeDevice:
         await self._controller.send_raw_command(self, command)
 
     def update(self, message: DevStatusResponse) -> None:
-        was_off = not self._is_on
-        is_now_on = message.is_on
-        
-        self._is_on = is_now_on
-        # We don't overwrite self._brightness from polling if it's 100% (to keep our virtual slider working)
-        if message.brightness < 100 or not self._initial_update_done:
-            self._brightness = message.brightness
-            
+        self._is_on = message.is_on
+        self._brightness = message.brightness
         if message.color != (0, 0, 0):
             self._rgb_color = message.color
         self._temperature_color = message.color_temperature
-        
-        # Physical wake-up sync
-        if is_now_on and was_off and self._initial_update_done:
-            self._controller._loop.create_task(self._sync_all_segments())
         
         # Initial sync only
         if not self._initial_update_done:
