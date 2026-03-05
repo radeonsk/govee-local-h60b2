@@ -122,9 +122,6 @@ class GoveeDevice:
         seg = self._segments[i - 1]
         
         if not seg.is_on:
-            # We no longer send explicit "turn off" commands (black or brightness 0) to segments.
-            # They will be implicitly turned off by either Master OFF or by being omitted
-            # from subsequent Segment ON commands (due to how Govee hardware handles missing segments in some firmware).
             return
 
         # Segment is ON, send its configuration
@@ -149,20 +146,21 @@ class GoveeDevice:
         """Apply the global state using the new workaround logic."""
         any_segment_on = any(s.is_on for s in self._segments)
 
+        if not any_segment_on:
+            # If NO segments are on, we send a Master OFF to turn everything off cleanly.
+            await self._controller.turn_on_off(self, False)
+            self._is_on = False
+            return
+
         # As a workaround for turning off segments: 
         # We send a Master OFF to turn everything off cleanly.
         await self._controller.turn_on_off(self, False)
-        self._is_on = False
         await asyncio.sleep(0.1)
 
-        if not any_segment_on:
-            return
-
-        # If AT LEAST ONE segment is on, we let the segment-specific commands
-        # wake the device back up naturally.
         self._is_on = True
         
-        # Restore only the active segments
+        # Restore only the active segments.
+        # Sending segment commands will implicitly wake up those parts of the lamp.
         for i in range(1, len(self._segments) + 1):
             if self._segments[i-1].is_on:
                 await self._send_segment_physical_state(i)
@@ -237,8 +235,18 @@ class GoveeDevice:
             if is_on:
                 seg.color = (red, green, blue)
                 seg.temperature = 0
+                self._is_on = True
+                
+                # Wake up if needed
+                if not self._is_on:
+                    await self._controller.turn_on_off(self, True)
+                    await asyncio.sleep(0.1)
+                
+                # Only send to THIS segment to prevent turning others on
+                await self._send_segment_physical_state(segment_index)
+            else:
+                await self._sync_physical_device() # Use wipe workaround for turning off
             
-            await self._sync_physical_device()
             self._trigger_update_callbacks()
 
     async def set_segment_temperature(self, segment_index: int, temperature: int, brightness: int | None = None) -> None:
@@ -247,21 +255,40 @@ class GoveeDevice:
             seg.temperature = temperature
             seg.color = (255, 255, 255)
             seg.is_on = True
+            self._is_on = True
+            
             if brightness is not None:
                 seg.brightness = brightness
             
-            await self._sync_physical_device()
+            # Wake up if needed
+            if not self._is_on:
+                await self._controller.turn_on_off(self, True)
+                await asyncio.sleep(0.1)
+                
+            # Only send to THIS segment
+            await self._send_segment_physical_state(segment_index)
+            
             self._trigger_update_callbacks()
 
     async def turn_segment_on(self, segment_index: int) -> None:
         if 0 < segment_index <= len(self._segments):
             self._segments[segment_index - 1].is_on = True
-            await self._sync_physical_device()
+            self._is_on = True
+            
+            # Wake up if needed
+            if not self._is_on:
+                await self._controller.turn_on_off(self, True)
+                await asyncio.sleep(0.1)
+                
+            # Only send to THIS segment
+            await self._send_segment_physical_state(segment_index)
+            
             self._trigger_update_callbacks()
 
     async def turn_segment_off(self, segment_index: int) -> None:
         if 0 < segment_index <= len(self._segments):
             self._segments[segment_index - 1].is_on = False
+            # Use wipe workaround for turning off
             await self._sync_physical_device()
             self._trigger_update_callbacks()
 
