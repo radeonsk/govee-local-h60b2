@@ -478,6 +478,7 @@ class GoveeController(asyncio.DatagramProtocol):
             if self._call_discovered_callback(device, True):
                 device = self._registry.add_discovered_device(device)
                 self._logger.debug("Device discovered: %s", device)
+                self._send_update_message(device)
             else:
                 self._logger.debug("Device %s ignored", device)
 

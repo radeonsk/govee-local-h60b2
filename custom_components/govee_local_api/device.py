@@ -59,6 +59,7 @@ class GoveeDevice:
             GoveeSegment(False, (255, 255, 255))
             for _ in range(capabilities.segments_count)
         ]
+        self._last_physical_on = False
 
     @property
     def controller(self):
@@ -148,6 +149,8 @@ class GoveeDevice:
                 s_red = int(seg.color[0] * s_brightness / 100)
                 s_green = int(seg.color[1] * s_brightness / 100)
                 s_blue = int(seg.color[2] * s_brightness / 100)
+                if (s_red, s_green, s_blue) == (0, 0, 0) and seg.color != (0, 0, 0):
+                    s_red = s_green = s_blue = 1
             else:
                 s_red = s_green = s_blue = 0
 
@@ -155,15 +158,8 @@ class GoveeDevice:
             await self._controller.set_segment_rgb_color(self, segment, rgb)
             await self._controller.set_segment_brightness(self, segment, s_brightness)
 
-            # Logic: If any segment is off, the whole lamp is considered off in HA
-            # If all segments are on, the whole lamp is considered on in HA
-            all_on = all(s.is_on for s in self._segments)
-            any_off = any(not s.is_on for s in self._segments)
-
-            if any_off:
-                self._is_on = False
-            elif all_on:
-                self._is_on = True
+            # Master is ON only if all segments are ON
+            self._is_on = all(s.is_on for s in self._segments)
 
             if self._update_callback and callable(self._update_callback):
                 self._update_callback(self)
@@ -174,7 +170,6 @@ class GoveeDevice:
         if 0 < segment <= len(self._segments):
             seg = self._segments[segment - 1]
             seg.temperature = temperature
-            seg.color = (0, 0, 0)
             seg.is_on = True
             if brightness is not None:
                 seg.brightness = brightness
@@ -182,9 +177,8 @@ class GoveeDevice:
             await self._controller.set_segment_color_temperature(self, segment, temperature)
             await self._controller.set_segment_brightness(self, segment, seg.brightness)
 
-            # Check if all segments are now on
-            if all(s.is_on for s in self._segments):
-                self._is_on = True
+            # Master is ON only if all segments are ON
+            self._is_on = all(s.is_on for s in self._segments)
 
             if self._update_callback and callable(self._update_callback):
                 self._update_callback(self)
@@ -232,7 +226,7 @@ class GoveeDevice:
         self._temperature_color = temperature
         for segment in self._segments:
             segment.temperature = temperature
-            segment.color = (0, 0, 0)
+            segment.color = (255, 255, 255)
             segment.is_on = True
         if self._update_callback and callable(self._update_callback):
             self._update_callback(self)
@@ -244,10 +238,37 @@ class GoveeDevice:
         await self._controller.send_raw_command(self, command)
 
     def update(self, message: DevStatusResponse) -> None:
-        self._is_on = message.is_on
+        physically_on = message.is_on
+        
+        # If physical state changed from OFF to ON, sync all segments to ON
+        if physically_on and not self._last_physical_on:
+            for segment in self._segments:
+                segment.is_on = True
+        
+        self._last_physical_on = physically_on
         self._brightness = message.brightness
         self._rgb_color = message.color
         self._temperature_color = message.color_temperature
+        
+        if not physically_on:
+            self._is_on = False
+            for segment in self._segments:
+                segment.is_on = False
+        else:
+            # Sync segment values from master if they are all ON (global update)
+            if all(s.is_on for s in self._segments):
+                for segment in self._segments:
+                    segment.brightness = self._brightness
+                    if self._temperature_color > 0:
+                        segment.temperature = self._temperature_color
+                        segment.color = (255, 255, 255)
+                    else:
+                        segment.color = self._rgb_color
+                        segment.temperature = 0
+            
+            # Master state is ON only if all segments are ON
+            self._is_on = all(s.is_on for s in self._segments)
+
         self.update_lastseen()
         if self._update_callback and callable(self._update_callback):
             self._update_callback(self)
