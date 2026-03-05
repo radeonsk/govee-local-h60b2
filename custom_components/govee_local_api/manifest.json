@@ -1,0 +1,10 @@
+{
+  "domain": "govee_local_api",
+  "name": "Govee Local API",
+  "version": "2.3.0",
+  "documentation": "https://github.com/Galorhallen/govee-local-api",
+  "dependencies": [],
+  "codeowners": ["@Galorhallen"],
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/Galorhallen/govee-local-api/issues"
+}
