@@ -120,24 +120,27 @@ class GoveeDevice:
     async def _send_segment_state(self, segment_index: int) -> None:
         """Send the current state of a single segment to the physical device."""
         seg = self._segments[segment_index - 1]
-        if not seg.is_on:
-            await self._controller.set_segment_rgb_color(self, segment_index, (0, 0, 0))
-            await asyncio.sleep(0.05)
-            await self._controller.set_segment_brightness(self, segment_index, 0)
-        elif seg.temperature > 0:
+        target_brightness = seg.brightness if seg.is_on else 0
+        
+        if seg.temperature > 0:
             await self._controller.set_segment_color_temperature(self, segment_index, seg.temperature)
-            await asyncio.sleep(0.05)
-            await self._controller.set_segment_brightness(self, segment_index, seg.brightness)
         else:
-            # Scaled RGB as fallback
-            s_red = int(seg.color[0] * seg.brightness / 100)
-            s_green = int(seg.color[1] * seg.brightness / 100)
-            s_blue = int(seg.color[2] * seg.brightness / 100)
-            if (s_red, s_green, s_blue) == (0, 0, 0) and seg.color != (0, 0, 0):
-                s_red = s_green = s_blue = 1
-            await self._controller.set_segment_rgb_color(self, segment_index, (s_red, s_green, s_blue))
-            await asyncio.sleep(0.05)
-            await self._controller.set_segment_brightness(self, segment_index, seg.brightness)
+            # Scaled RGB as fallback for H60B2
+            s_red = int(seg.color[0] * target_brightness / 100)
+            s_green = int(seg.color[1] * target_brightness / 100)
+            s_blue = int(seg.color[2] * target_brightness / 100)
+            
+            # If turning off, we send the "real" color first to keep physical memory consistent,
+            # then rely on the brightness command to actually turn it off.
+            if not seg.is_on:
+                await self._controller.set_segment_rgb_color(self, segment_index, seg.color)
+            else:
+                if (s_red, s_green, s_blue) == (0, 0, 0) and seg.color != (0, 0, 0):
+                    s_red = s_green = s_blue = 1
+                await self._controller.set_segment_rgb_color(self, segment_index, (s_red, s_green, s_blue))
+        
+        await asyncio.sleep(0.05)
+        await self._controller.set_segment_brightness(self, segment_index, target_brightness)
 
     async def _sync_all_segments(self) -> None:
         """Synchronize all segments with the physical device."""
@@ -190,7 +193,6 @@ class GoveeDevice:
             else:
                 seg.is_on = False
 
-            # Instead of just sending one, sync all segments to ensure physical device matches HA
             await self._sync_all_segments()
 
             if any(s.is_on for s in self._segments):
@@ -217,7 +219,6 @@ class GoveeDevice:
                 await asyncio.sleep(0.1)
                 self._is_on = True
 
-            # Sync all segments
             await self._sync_all_segments()
 
             self._is_on = True
@@ -226,19 +227,24 @@ class GoveeDevice:
     async def turn_segment_on(self, segment_index: int) -> None:
         if 0 < segment_index <= len(self._segments):
             seg = self._segments[segment_index - 1]
-            if seg.temperature > 0:
-                await self.set_segment_temperature(segment_index, seg.temperature)
-            else:
-                await self.set_segment_rgb_color(segment_index, *seg.color)
+            seg.is_on = True
+            await self._sync_all_segments()
 
-    async def turn_segment_off(self, segment: int) -> None:
-        await self.set_segment_rgb_color(segment, 0, 0, 0)
+    async def turn_segment_off(self, segment_index: int) -> None:
+        if 0 < segment_index <= len(self._segments):
+            seg = self._segments[segment_index - 1]
+            seg.is_on = False
+            await self._sync_all_segments()
 
     async def turn_off(self) -> None:
+        # Sync state before power off
+        if self._temperature_color > 0:
+            await self._controller.set_color(self, temperature=self._temperature_color, rgb=None)
+        else:
+            await self._controller.set_color(self, rgb=self._rgb_color, temperature=None)
         await self._controller.set_brightness(self, self._brightness)
-        await asyncio.sleep(0.1)
+            
         await self._controller.turn_on_off(self, False)
-        
         self._is_on = False
         for segment in self._segments:
             segment.is_on = False
@@ -286,7 +292,7 @@ class GoveeDevice:
             self._rgb_color = message.color
         self._temperature_color = message.color_temperature
         
-        # Initial sync OR physical power change detected
+        # Initial sync only
         if not self._initial_update_done or power_changed:
             for segment in self._segments:
                 segment.is_on = self._is_on
