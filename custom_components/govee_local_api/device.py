@@ -17,7 +17,7 @@ class GoveeSegment:
         temperature: int = 0,
     ) -> None:
         self.is_on = is_on
-        self.color = color
+        self.color = color if color != (0, 0, 0) else (255, 255, 255)
         self.brightness = brightness
         self.temperature = temperature
 
@@ -30,7 +30,7 @@ class GoveeSegment:
         }
 
     def __str__(self) -> str:
-        return f"<GoveeSegment is_on={self.is_on}, color={self.color}>"
+        return f"<GoveeSegment is_on={self.is_on}, color={self.color}, brightness={self.brightness}, temperature={self.temperature}>"
 
 
 class GoveeDevice:
@@ -56,7 +56,8 @@ class GoveeDevice:
         self._update_callback: Callable[[GoveeDevice], None] | None = None
         self.is_manual: bool = False
         self._segments: list[GoveeSegment] = [
-            GoveeSegment(False, (0, 0, 0)) for _ in range(capabilities.segments_count)
+            GoveeSegment(False, (255, 255, 255))
+            for _ in range(capabilities.segments_count)
         ]
 
     @property
@@ -131,54 +132,70 @@ class GoveeDevice:
         brightness: int | None = None,
     ) -> None:
         if 0 < segment <= len(self._segments):
+            seg = self._segments[segment - 1]
             if brightness is not None:
-                self._segments[segment - 1].brightness = brightness
-            
-            s_brightness = self._segments[segment - 1].brightness
-            s_red = int(red * s_brightness / 100)
-            s_green = int(green * s_brightness / 100)
-            s_blue = int(blue * s_brightness / 100)
-            
+                seg.brightness = brightness
+
+            if (red, green, blue) != (0, 0, 0):
+                seg.color = (red, green, blue)
+                seg.temperature = 0
+                seg.is_on = True
+            else:
+                seg.is_on = False
+
+            s_brightness = seg.brightness
+            if seg.is_on:
+                s_red = int(seg.color[0] * s_brightness / 100)
+                s_green = int(seg.color[1] * s_brightness / 100)
+                s_blue = int(seg.color[2] * s_brightness / 100)
+            else:
+                s_red = s_green = s_blue = 0
+
             rgb: tuple[int, int, int] = (s_red, s_green, s_blue)
             await self._controller.set_segment_rgb_color(self, segment, rgb)
-            
-            self._segments[segment - 1].color = (red, green, blue)
-            self._segments[segment - 1].is_on = (red, green, blue) != (0, 0, 0)
-            self._segments[segment - 1].temperature = 0
-            
             await self._controller.set_segment_brightness(self, segment, s_brightness)
-            
+
             # Logic: If any segment is off, the whole lamp is considered off in HA
             # If all segments are on, the whole lamp is considered on in HA
             all_on = all(s.is_on for s in self._segments)
             any_off = any(not s.is_on for s in self._segments)
-            
+
             if any_off:
                 self._is_on = False
             elif all_on:
                 self._is_on = True
-                
+
             if self._update_callback and callable(self._update_callback):
                 self._update_callback(self)
 
     async def set_segment_temperature(
         self, segment: int, temperature: int, brightness: int | None = None
     ) -> None:
-        await self._controller.set_segment_color_temperature(self, segment, temperature)
         if 0 < segment <= len(self._segments):
-            self._segments[segment - 1].temperature = temperature
-            self._segments[segment - 1].is_on = True
-            self._segments[segment - 1].color = (0, 0, 0)
+            seg = self._segments[segment - 1]
+            seg.temperature = temperature
+            seg.color = (0, 0, 0)
+            seg.is_on = True
             if brightness is not None:
-                self._segments[segment - 1].brightness = brightness
-                await self._controller.set_segment_brightness(self, segment, brightness)
-            
+                seg.brightness = brightness
+
+            await self._controller.set_segment_color_temperature(self, segment, temperature)
+            await self._controller.set_segment_brightness(self, segment, seg.brightness)
+
             # Check if all segments are now on
             if all(s.is_on for s in self._segments):
                 self._is_on = True
-                
+
             if self._update_callback and callable(self._update_callback):
                 self._update_callback(self)
+
+    async def turn_segment_on(self, segment_index: int) -> None:
+        if 0 < segment_index <= len(self._segments):
+            seg = self._segments[segment_index - 1]
+            if seg.temperature > 0:
+                await self.set_segment_temperature(segment_index, seg.temperature)
+            else:
+                await self.set_segment_rgb_color(segment_index, *seg.color)
 
     async def turn_segment_off(self, segment: int) -> None:
         await self.set_segment_rgb_color(segment, 0, 0, 0)

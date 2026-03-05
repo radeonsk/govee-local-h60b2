@@ -215,6 +215,10 @@ class GoveeSegmentLightEntity(LightEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the segment on."""
+        if not kwargs:
+            await self._device.turn_segment_on(self._segment_index)
+            return
+
         segment = self._device.segments[self._segment_index - 1]
         
         brightness = segment.brightness
@@ -236,11 +240,8 @@ class GoveeSegmentLightEntity(LightEntity):
                     self._segment_index, segment.temperature, brightness=brightness
                 )
             else:
-                red, green, blue = segment.color
-                if (red, green, blue) == (0, 0, 0):
-                    red, green, blue = (255, 255, 255)
                 await self._device.set_segment_rgb_color(
-                    self._segment_index, red, green, blue, brightness=brightness
+                    self._segment_index, *segment.color, brightness=brightness
                 )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
