@@ -150,13 +150,12 @@ class SegmentColorTemperatureMessage(PtRealMessage):
 
 class SegmentBrightnessMessage(PtRealMessage):
     def __init__(self, segment: bytes, brightness: int) -> None:
-        # Standard RGBIC offset for brightness mask at 12
+        # Improved offset for H60B2 brightness: mask at byte 5 (index 5)
         data = (
             b"\x33\x05\x15\x02"
             + brightness.to_bytes(1, "big")
-            + b"\x00\x00\x00\x00\x00\x00\x00"
             + segment
-            + b"\x00\x00\x00\x00\x00"
+            + b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
         )
         super().__init__([data])
 
