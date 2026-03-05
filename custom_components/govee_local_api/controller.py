@@ -26,6 +26,8 @@ from .message import (
     ScanMessage,
     ScanResponse,
     SegmentColorMessages,
+    SegmentColorTemperatureMessage,
+    SegmentBrightnessMessage,
     DevStatusMessage,
     DevStatusResponse,
 )

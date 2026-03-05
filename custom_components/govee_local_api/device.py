@@ -117,6 +117,10 @@ class GoveeDevice:
     async def turn_on(self) -> None:
         await self._controller.turn_on_off(self, True)
         self._is_on = True
+        for segment in self._segments:
+            segment.is_on = True
+        if self._update_callback and callable(self._update_callback):
+            self._update_callback(self)
 
     async def set_segment_rgb_color(
         self,
@@ -158,19 +162,39 @@ class GoveeDevice:
     async def turn_off(self) -> None:
         await self._controller.turn_on_off(self, False)
         self._is_on = False
+        for segment in self._segments:
+            segment.is_on = False
+        if self._update_callback and callable(self._update_callback):
+            self._update_callback(self)
 
     async def set_brightness(self, value: int) -> None:
         await self._controller.set_brightness(self, value)
         self._brightness = value
+        for segment in self._segments:
+            segment.brightness = value
+        if self._update_callback and callable(self._update_callback):
+            self._update_callback(self)
 
     async def set_rgb_color(self, red: int, green: int, blue: int) -> None:
         rgb = (red, green, blue)
         await self._controller.set_color(self, rgb=rgb, temperature=None)
         self._rgb_color = rgb
+        for segment in self._segments:
+            segment.color = rgb
+            segment.temperature = 0
+            segment.is_on = True
+        if self._update_callback and callable(self._update_callback):
+            self._update_callback(self)
 
     async def set_temperature(self, temperature: int) -> None:
         await self._controller.set_color(self, temperature=temperature, rgb=None)
         self._temperature_color = temperature
+        for segment in self._segments:
+            segment.temperature = temperature
+            segment.color = (0, 0, 0)
+            segment.is_on = True
+        if self._update_callback and callable(self._update_callback):
+            self._update_callback(self)
 
     async def set_scene(self, scene: str) -> None:
         await self._controller.set_scene(self, scene)
