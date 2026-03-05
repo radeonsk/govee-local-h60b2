@@ -118,16 +118,17 @@ class GoveeDevice:
                 callback(self)
 
     async def _send_segment_physical_state(self, i: int) -> None:
-        """Send the physical state of a single segment to the hardware."""
+        """Send the physical state of a single ACTIVE segment to the hardware."""
         seg = self._segments[i - 1]
         
-        # Determine target brightness (0 if off)
-        target_brightness = seg.brightness if seg.is_on else 0
-
-        # If OFF, force black color to ensure it physically turns off on H60B2
         if not seg.is_on:
-            await self._controller.set_segment_rgb_color(self, i, (0, 0, 0))
-        elif seg.temperature > 0:
+            # We no longer send explicit "turn off" commands (black or brightness 0) to segments.
+            # They will be implicitly turned off by either Master OFF or by being omitted
+            # from subsequent Segment ON commands (due to how Govee hardware handles missing segments in some firmware).
+            return
+
+        # Segment is ON, send its configuration
+        if seg.temperature > 0:
             await self._controller.set_segment_color_temperature(self, i, seg.temperature)
         else:
             # Scale RGB by seg.brightness
@@ -135,43 +136,50 @@ class GoveeDevice:
             s_green = int(seg.color[1] * seg.brightness / 100)
             s_blue = int(seg.color[2] * seg.brightness / 100)
             
-            # Ensure not pure black to prevent locking
+            # Ensure not pure black
             if (s_red, s_green, s_blue) == (0, 0, 0) and seg.color != (0, 0, 0):
                 s_red = s_green = s_blue = 1
                 
             await self._controller.set_segment_rgb_color(self, i, (s_red, s_green, s_blue))
         
         await asyncio.sleep(0.05)
-        # Send Brightness to actually control intensity / turn off
-        await self._controller.set_segment_brightness(self, i, target_brightness)
+        await self._controller.set_segment_brightness(self, i, seg.brightness)
 
     async def _sync_physical_device(self) -> None:
-        """Apply all segment states to hardware iteratively."""
-        for i in range(1, len(self._segments) + 1):
-            await self._send_segment_physical_state(i)
-            await asyncio.sleep(0.05)
+        """Apply the global state using the new workaround logic."""
+        any_segment_on = any(s.is_on for s in self._segments)
 
-    async def _ensure_awake_and_sync(self, force_sync_all: bool = False):
-        """Wakes up the physical device only if it was OFF, then syncs segments."""
-        was_off = not self._is_on
+        # As a workaround for turning off segments: 
+        # We send a Master OFF to turn everything off cleanly.
+        await self._controller.turn_on_off(self, False)
+        self._is_on = False
+        await asyncio.sleep(0.1)
+
+        if not any_segment_on:
+            return
+
+        # If AT LEAST ONE segment is on, we restore them.
+        # Sending segment commands will turn those specific segments back on.
         self._is_on = True
         
-        if was_off:
-            await self._controller.turn_on_off(self, True)
-            await asyncio.sleep(0.1)
-            # Set master physical brightness to 100% so segments can use full 0-100% range
-            await self._controller.set_brightness(self, 100)
-            await asyncio.sleep(0.1)
-            # Syncing all segments is required because turning on master physically turns them all on
-            await self._sync_physical_device()
-        elif force_sync_all:
-            await self._sync_physical_device()
+        # Ensure segments have full range
+        await self._controller.set_brightness(self, 100)
+        await asyncio.sleep(0.1)
+        
+        for i in range(1, len(self._segments) + 1):
+            if self._segments[i-1].is_on:
+                await self._send_segment_physical_state(i)
+                await asyncio.sleep(0.05)
+
+    async def _ensure_awake_and_sync(self, force_sync_all: bool = False):
+        """Re-implemented to use the new workaround logic."""
+        await self._sync_physical_device()
 
     async def turn_on(self) -> None:
         """Master Turn On: Propagate to all segments."""
         for segment in self._segments:
             segment.is_on = True
-        await self._ensure_awake_and_sync(force_sync_all=True)
+        await self._sync_physical_device()
         self._trigger_update_callbacks()
 
     async def turn_off(self) -> None:
@@ -179,19 +187,7 @@ class GoveeDevice:
         self._is_on = False
         for segment in self._segments:
             segment.is_on = False
-            
-        # Prime physical memory before shutting down
-        if self._temperature_color > 0:
-            await self._controller.set_color(self, temperature=self._temperature_color, rgb=None)
-        else:
-            await self._controller.set_color(self, rgb=self._rgb_color, temperature=None)
-        await asyncio.sleep(0.05)
-        
-        # We also set master physical brightness to 0 as an extra guarantee
-        await self._controller.set_brightness(self, 0)
-        await asyncio.sleep(0.05)
-        
-        await self._controller.turn_on_off(self, False)
+        await self._sync_physical_device()
         self._trigger_update_callbacks()
 
     async def set_brightness(self, value: int) -> None:
@@ -203,7 +199,7 @@ class GoveeDevice:
                 segment.is_on = True
         
         if value > 0:
-            await self._ensure_awake_and_sync(force_sync_all=True)
+            await self._sync_physical_device()
         else:
             await self.turn_off()
         self._trigger_update_callbacks()
@@ -218,7 +214,7 @@ class GoveeDevice:
             segment.temperature = 0
             segment.is_on = True
         
-        await self._ensure_awake_and_sync(force_sync_all=True)
+        await self._sync_physical_device()
         self._trigger_update_callbacks()
 
     async def set_temperature(self, temperature: int) -> None:
@@ -229,7 +225,7 @@ class GoveeDevice:
             segment.color = (255, 255, 255)
             segment.is_on = True
             
-        await self._ensure_awake_and_sync(force_sync_all=True)
+        await self._sync_physical_device()
         self._trigger_update_callbacks()
 
     # Segment Specific Methods
@@ -244,10 +240,8 @@ class GoveeDevice:
             if is_on:
                 seg.color = (red, green, blue)
                 seg.temperature = 0
-                await self._ensure_awake_and_sync(force_sync_all=True)
-            else:
-                await self.turn_segment_off(segment_index)
             
+            await self._sync_physical_device()
             self._trigger_update_callbacks()
 
     async def set_segment_temperature(self, segment_index: int, temperature: int, brightness: int | None = None) -> None:
@@ -259,27 +253,19 @@ class GoveeDevice:
             if brightness is not None:
                 seg.brightness = brightness
             
-            await self._ensure_awake_and_sync(force_sync_all=True)
+            await self._sync_physical_device()
             self._trigger_update_callbacks()
 
     async def turn_segment_on(self, segment_index: int) -> None:
         if 0 < segment_index <= len(self._segments):
             self._segments[segment_index - 1].is_on = True
-            await self._ensure_awake_and_sync(force_sync_all=True)
+            await self._sync_physical_device()
             self._trigger_update_callbacks()
 
     async def turn_segment_off(self, segment_index: int) -> None:
         if 0 < segment_index <= len(self._segments):
             self._segments[segment_index - 1].is_on = False
-            
-            # If all segments are now off, just turn off the whole lamp
-            if not any(s.is_on for s in self._segments):
-                self._is_on = False
-                await self._controller.turn_on_off(self, False)
-            else:
-                # Otherwise sync segments to ensure physical device matches HA
-                await self._sync_physical_device()
-                
+            await self._sync_physical_device()
             self._trigger_update_callbacks()
 
     async def set_scene(self, scene: str) -> None:
