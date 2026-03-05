@@ -122,29 +122,28 @@ class GoveeDevice:
         seg = self._segments[i - 1]
         
         # Power State logic
-        if not seg.is_on:
-            # Turn off segment by setting it to black and 0 brightness
-            await self._controller.set_segment_rgb_color(self, i, (0, 0, 0))
-            await asyncio.sleep(0.05)
-            await self._controller.set_segment_brightness(self, i, 0)
+        target_brightness = seg.brightness if seg.is_on else 0
 
-        # Color/Temperature
+        # Color/Temperature (even if OFF, to prime memory)
         if seg.temperature > 0:
             await self._controller.set_segment_color_temperature(self, i, seg.temperature)
         else:
             # Scale RGB by brightness as fallback
-            s_red = int(seg.color[0] * seg.brightness / 100)
-            s_green = int(seg.color[1] * seg.brightness / 100)
-            s_blue = int(seg.color[2] * seg.brightness / 100)
+            s_red = int(seg.color[0] * target_brightness / 100)
+            s_green = int(seg.color[1] * target_brightness / 100)
+            s_blue = int(seg.color[2] * target_brightness / 100)
             
-            # Ensure not pure black if ON
-            if (s_red, s_green, s_blue) == (0, 0, 0) and seg.color != (0, 0, 0):
-                s_red = s_green = s_blue = 1
-            await self._controller.set_segment_rgb_color(self, i, (s_red, s_green, s_blue))
+            # Special case for OFF: some H60B2 need a black command to truly go dark
+            if not seg.is_on:
+                await self._controller.set_segment_rgb_color(self, i, (0, 0, 0))
+            else:
+                if (s_red, s_green, s_blue) == (0, 0, 0) and seg.color != (0, 0, 0):
+                    s_red = s_green = s_blue = 1
+                await self._controller.set_segment_rgb_color(self, i, (s_red, s_green, s_blue))
         
         await asyncio.sleep(0.05)
         # Intensity
-        await self._controller.set_segment_brightness(self, i, seg.brightness)
+        await self._controller.set_segment_brightness(self, i, target_brightness)
 
     async def _sync_physical_device(self) -> None:
         """Apply all states to hardware, ensuring master brightness is at 100% for full independence."""
@@ -245,11 +244,8 @@ class GoveeDevice:
             if brightness is not None:
                 seg.brightness = brightness
             
-            await self._sync_all_segments_wrapper() # Helper to trigger sync
+            await self._sync_physical_device()
             self._trigger_update_callbacks()
-
-    async def _sync_all_segments_wrapper(self):
-        await self._sync_physical_device()
 
     async def turn_segment_on(self, segment_index: int) -> None:
         if 0 < segment_index <= len(self._segments):
@@ -275,8 +271,7 @@ class GoveeDevice:
         is_now_on = message.is_on
         
         self._is_on = is_now_on
-        # Virtual Master Slider logic:
-        # If device reports 100% brightness (our bypass), we don't overwrite the slider unless initial
+        # Virtual Master Slider logic
         if message.brightness < 100 or not self._initial_update_done:
             self._brightness = message.brightness
             
@@ -297,7 +292,7 @@ class GoveeDevice:
                     segment.temperature = 0
             self._initial_update_done = True
         
-        # Physical Wakeup Detect: re-apply segment state if lamp was manually turned ON
+        # Physical Wakeup Detect
         if is_now_on and was_off:
             self._controller._loop.create_task(self._sync_physical_device())
                 
