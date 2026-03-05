@@ -121,26 +121,28 @@ class GoveeDevice:
         """Send the physical state of a segment to the hardware."""
         seg = self._segments[i - 1]
         
-        # Determine target brightness (0 if off)
-        target_brightness = seg.brightness if seg.is_on else 0
+        # Power State logic
+        if not seg.is_on:
+            await self._controller.set_segment_brightness(self, i, 0)
+            return
 
         # Color/Temperature
         if seg.temperature > 0:
             await self._controller.set_segment_color_temperature(self, i, seg.temperature)
         else:
             # Scale RGB by brightness as fallback
-            s_red = int(seg.color[0] * target_brightness / 100)
-            s_green = int(seg.color[1] * target_brightness / 100)
-            s_blue = int(seg.color[2] * target_brightness / 100)
+            s_red = int(seg.color[0] * seg.brightness / 100)
+            s_green = int(seg.color[1] * seg.brightness / 100)
+            s_blue = int(seg.color[2] * seg.brightness / 100)
             
             # Ensure not pure black if ON
-            if seg.is_on and (s_red, s_green, s_blue) == (0, 0, 0) and seg.color != (0, 0, 0):
+            if (s_red, s_green, s_blue) == (0, 0, 0) and seg.color != (0, 0, 0):
                 s_red = s_green = s_blue = 1
             await self._controller.set_segment_rgb_color(self, i, (s_red, s_green, s_blue))
         
         await asyncio.sleep(0.05)
         # Intensity
-        await self._controller.set_segment_brightness(self, i, target_brightness)
+        await self._controller.set_segment_brightness(self, i, seg.brightness)
 
     async def _sync_physical_device(self) -> None:
         """Apply all states to hardware, ensuring master brightness is at 100% for full independence."""
