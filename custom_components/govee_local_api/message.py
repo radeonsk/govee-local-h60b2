@@ -128,9 +128,9 @@ class SegmentColorMessages(PtRealMessage):
         data = (
             b"\x33\x05\x15\x01"
             + bytes(capped_color)
-            + b"\x00\x00\x00\x00\x00\x00\x00\x00"
+            + b"\x00\x00\x00\x00\x00"
             + segment
-            + b"\x00\x00"
+            + b"\x00\x00\x00\x00\x00"
         )
         super().__init__([data])
 
@@ -140,8 +140,9 @@ class SegmentColorTemperatureMessage(PtRealMessage):
         data = (
             b"\x33\x05\x15\x01\xff\xff\xff"
             + temperature.to_bytes(2, "big")
-            + b"\x00\x00\x00\x00\x00\x00"
+            + b"\x00\x00\x00"
             + segment
+            + b"\x00\x00\x00\x00\x00"
         )
         super().__init__([data])
 
@@ -151,8 +152,9 @@ class SegmentBrightnessMessage(PtRealMessage):
         data = (
             b"\x33\x05\x15\x02"
             + brightness.to_bytes(1, "big")
+            + b"\x00\x00\x00\x00\x00\x00\x00"
             + segment
-            + b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+            + b"\x00\x00\x00\x00\x00"
         )
         super().__init__([data])
 

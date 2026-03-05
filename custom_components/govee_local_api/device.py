@@ -145,6 +145,7 @@ class GoveeDevice:
                 seg.is_on = False
 
             s_brightness = seg.brightness
+            # Use standard RGB scaling for fallback
             if seg.is_on:
                 s_red = int(seg.color[0] * s_brightness / 100)
                 s_green = int(seg.color[1] * s_brightness / 100)
