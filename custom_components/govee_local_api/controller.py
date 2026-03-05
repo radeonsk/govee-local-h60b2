@@ -30,6 +30,7 @@ from .message import (
     SegmentBrightnessMessage,
     DevStatusMessage,
     DevStatusResponse,
+    StatusResponse,
 )
 
 BROADCAST_ADDRESS = "239.255.255.250"
@@ -425,6 +426,55 @@ class GoveeController(asyncio.DatagramProtocol):
             await self._handle_status_update_response(
                 cast(DevStatusResponse, message), addr
             )
+        elif message.command == StatusResponse.command:
+            await self._handle_passthrough_status_response(
+                cast(StatusResponse, message), addr
+            )
+
+    async def _handle_passthrough_status_response(self, message: StatusResponse, addr):
+        self._logger.debug("Passthrough status update received from {}: {}", addr, message)
+        ip = addr[0]
+        if device := self.get_device_by_ip(ip):
+            try:
+                payload = base64.b64decode(message.data["pt"])
+                if len(payload) < 3:
+                    return
+                
+                # Basic parsing of Govee hex protocol
+                # 0x33 is the start byte for most commands
+                if payload[0] == 0x33:
+                    cmd = payload[1]
+                    if cmd == 0x01: # Power
+                        device._is_on = bool(payload[2])
+                    elif cmd == 0x04: # Brightness
+                        device._brightness = payload[2]
+                    elif cmd == 0x05: # Color/Temp
+                        if payload[2] == 0x02: # Color Temperature
+                            device._temperature_color = (payload[3] << 8) | payload[4]
+                            device._rgb_color = (0, 0, 0)
+                        elif payload[2] == 0x01: # RGB Color
+                            device._rgb_color = (payload[3], payload[4], payload[5])
+                            device._temperature_color = 0
+                    
+                    # Force a segment sync and UI update
+                    device.update_lastseen()
+                    # Trigger the update logic we already have in device.py
+                    # We can call device.update with a dummy or refactor
+                    # For now, let's just trigger the callback
+                    for segment in device._segments:
+                        segment.is_on = device._is_on
+                        segment.brightness = device._brightness
+                        if device._temperature_color > 0:
+                            segment.temperature = device._temperature_color
+                            segment.color = (255, 255, 255)
+                        else:
+                            segment.color = device._rgb_color
+                            segment.temperature = 0
+
+                    if device._update_callback and callable(device._update_callback):
+                        device._update_callback(device)
+            except Exception as e:
+                self._logger.error("Failed to parse passthrough status from %s: %s", addr, e)
 
     async def _handle_status_update_response(self, message: DevStatusResponse, addr):
         self._logger.debug("Status update received from {}: {}", addr, message)
