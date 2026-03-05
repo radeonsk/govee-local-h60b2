@@ -272,6 +272,32 @@ class GoveeController(asyncio.DatagramProtocol):
         self._logger.debug(f"Sending message {message} to device {device}")
         self._send_message(message, device)
 
+    async def set_segment_color_temperature(
+        self, device: GoveeDevice, segment: int, temperature: int
+    ) -> None:
+        if not device.capabilities or not (
+            device.capabilities.features & GoveeLightFeatures.SEGMENT_CONTROL
+        ):
+            return
+
+        segment_data: bytes = device.capabilities.segments[segment - 1]
+        message = SegmentColorTemperatureMessage(segment_data, temperature)
+        self._logger.debug(f"Sending message {message} to device {device}")
+        self._send_message(message, device)
+
+    async def set_segment_brightness(
+        self, device: GoveeDevice, segment: int, brightness: int
+    ) -> None:
+        if not device.capabilities or not (
+            device.capabilities.features & GoveeLightFeatures.SEGMENT_CONTROL
+        ):
+            return
+
+        segment_data: bytes = device.capabilities.segments[segment - 1]
+        message = SegmentBrightnessMessage(segment_data, brightness)
+        self._logger.debug(f"Sending message {message} to device {device}")
+        self._send_message(message, device)
+
     async def set_scene(self, device: GoveeDevice, scene: str) -> None:
         if (
             not device.capabilities

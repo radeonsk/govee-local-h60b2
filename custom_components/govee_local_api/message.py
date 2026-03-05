@@ -135,6 +135,30 @@ class SegmentColorMessages(PtRealMessage):
         super().__init__([data])
 
 
+class SegmentColorTemperatureMessage(PtRealMessage):
+    def __init__(self, segment: bytes, temperature: int) -> None:
+        data = (
+            b"\x33\x05\x15\x01\xff\xff\xff"
+            + temperature.to_bytes(2, "big")
+            + b"\x00\x00\x00"
+            + segment
+            + b"\x00\x00\x00\x00\x00"
+        )
+        super().__init__([data])
+
+
+class SegmentBrightnessMessage(PtRealMessage):
+    def __init__(self, segment: bytes, brightness: int) -> None:
+        data = (
+            b"\x33\x05\x15\x02"
+            + brightness.to_bytes(1, "big")
+            + b"\x00\x00\x00\x00\x00\x00\x00"
+            + segment
+            + b"\x00\x00\x00\x00\x00"
+        )
+        super().__init__([data])
+
+
 class SceneMessages(PtRealMessage):
     def __init__(self, scene: bytes) -> None:
         data = (

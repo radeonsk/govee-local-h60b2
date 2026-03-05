@@ -127,9 +127,11 @@ class GoveeLightEntity(LightEntity):
         """Return the color mode of the light."""
         if self._device.temperature_color > 0:
             return ColorMode.COLOR_TEMP
-        if self._device.rgb_color and self._device.rgb_color != (0, 0, 0):
+        if ColorMode.RGB in self.supported_color_modes:
             return ColorMode.RGB
-        if self._device.capabilities.features & GoveeLightFeatures.BRIGHTNESS:
+        if ColorMode.COLOR_TEMP in self.supported_color_modes:
+            return ColorMode.COLOR_TEMP
+        if ColorMode.BRIGHTNESS in self.supported_color_modes:
             return ColorMode.BRIGHTNESS
         return ColorMode.ONOFF
 
@@ -181,7 +183,8 @@ class GoveeSegmentLightEntity(LightEntity):
         )
 
         self._attr_supported_color_modes = {ColorMode.RGB}
-        self._attr_color_mode = ColorMode.RGB
+        if device.capabilities.features & GoveeLightFeatures.COLOR_KELVIN_TEMPERATURE:
+            self._attr_supported_color_modes.add(ColorMode.COLOR_TEMP)
 
     @property
     def is_on(self) -> bool:
@@ -189,21 +192,56 @@ class GoveeSegmentLightEntity(LightEntity):
         return self._device.segments[self._segment_index - 1].is_on
 
     @property
+    def brightness(self) -> int:
+        """Return the brightness of this segment."""
+        return int(self._device.segments[self._segment_index - 1].brightness * 255 / 100)
+
+    @property
     def rgb_color(self) -> tuple[int, int, int] | None:
         """Return the rgb color value [int, int, int]."""
         return self._device.segments[self._segment_index - 1].color
 
+    @property
+    def color_temp_kelvin(self) -> int | None:
+        """Return the color temperature in Kelvin."""
+        return self._device.segments[self._segment_index - 1].temperature
+
+    @property
+    def color_mode(self) -> ColorMode | str | None:
+        """Return the color mode of the segment."""
+        if self._device.segments[self._segment_index - 1].temperature > 0:
+            return ColorMode.COLOR_TEMP
+        return ColorMode.RGB
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the segment on."""
-        if ATTR_RGB_COLOR in kwargs:
+        segment = self._device.segments[self._segment_index - 1]
+        
+        brightness = segment.brightness
+        if ATTR_BRIGHTNESS in kwargs:
+            brightness = int(kwargs[ATTR_BRIGHTNESS] * 100 / 255)
+
+        if ATTR_COLOR_TEMP_KELVIN in kwargs:
+            await self._device.set_segment_temperature(
+                self._segment_index, kwargs[ATTR_COLOR_TEMP_KELVIN], brightness=brightness
+            )
+        elif ATTR_RGB_COLOR in kwargs:
             red, green, blue = kwargs[ATTR_RGB_COLOR]
-            await self._device.set_segment_rgb_color(self._segment_index, red, green, blue)
+            await self._device.set_segment_rgb_color(
+                self._segment_index, red, green, blue, brightness=brightness
+            )
         else:
-            # If no color specified, use the last color or default to white
-            color = self.rgb_color
-            if not color or color == (0, 0, 0):
-                color = (255, 255, 255)
-            await self._device.set_segment_rgb_color(self._segment_index, *color)
+            if segment.temperature > 0:
+                await self._device.set_segment_temperature(
+                    self._segment_index, segment.temperature, brightness=brightness
+                )
+            else:
+                red, green, blue = segment.color
+                if (red, green, blue) == (0, 0, 0):
+                    red, green, blue = (255, 255, 255)
+                await self._device.set_segment_rgb_color(
+                    self._segment_index, red, green, blue, brightness=brightness
+                )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the segment off."""
