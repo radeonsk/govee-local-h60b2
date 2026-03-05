@@ -42,6 +42,9 @@ class GoveeDevice:
         self._brightness = 0
         self._update_callback: Callable[[GoveeDevice], None] | None = None
         self.is_manual: bool = False
+        self._segments: list[GoveeSegment] = [
+            GoveeSegment(False, (0, 0, 0)) for _ in range(capabilities.segments_count)
+        ]
 
     @property
     def controller(self):
@@ -50,6 +53,10 @@ class GoveeDevice:
     @property
     def capabilities(self) -> GoveeLightCapabilities:
         return self._capabilities
+
+    @property
+    def segments(self) -> list[GoveeSegment]:
+        return self._segments
 
     @property
     def ip(self) -> str:
@@ -103,9 +110,14 @@ class GoveeDevice:
     ) -> None:
         rgb: tuple[int, int, int] = (red, green, blue)
         await self._controller.set_segment_rgb_color(self, segment, rgb)
+        if 0 < segment <= len(self._segments):
+            self._segments[segment - 1].color = rgb
+            self._segments[segment - 1].is_on = rgb != (0, 0, 0)
+            if self._update_callback and callable(self._update_callback):
+                self._update_callback(self)
 
     async def turn_segment_off(self, segment: int) -> None:
-        await self._controller.set_segment_rgb_color(self, segment, (0, 0, 0))
+        await self.set_segment_rgb_color(segment, 0, 0, 0)
 
     async def turn_off(self) -> None:
         await self._controller.turn_on_off(self, False)

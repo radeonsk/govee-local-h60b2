@@ -38,7 +38,15 @@ async def async_setup_entry(
     def async_discover_device(device: GoveeDevice, is_new: bool) -> bool:
         """Handle discovery of a new Govee device."""
         if is_new:
-            async_add_entities([GoveeLightEntity(device)])
+            entities: list[LightEntity] = [GoveeLightEntity(device)]
+            if device.capabilities.segments_count > 0:
+                entities.extend(
+                    [
+                        GoveeSegmentLightEntity(device, i + 1)
+                        for i in range(device.capabilities.segments_count)
+                    ]
+                )
+            async_add_entities(entities)
         return True
 
     # Register callback for new devices
@@ -46,9 +54,17 @@ async def async_setup_entry(
 
     # Add existing devices
     if controller.devices:
-        async_add_entities(
-            [GoveeLightEntity(device) for device in controller.devices]
-        )
+        entities: list[LightEntity] = []
+        for device in controller.devices:
+            entities.append(GoveeLightEntity(device))
+            if device.capabilities.segments_count > 0:
+                entities.extend(
+                    [
+                        GoveeSegmentLightEntity(device, i + 1)
+                        for i in range(device.capabilities.segments_count)
+                    ]
+                )
+        async_add_entities(entities)
 
 
 class GoveeLightEntity(LightEntity):
@@ -137,6 +153,61 @@ class GoveeLightEntity(LightEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the light off."""
         await self._device.turn_off()
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+        self._device.set_update_callback(self._update_callback)
+
+    @callback
+    def _update_callback(self, device: GoveeDevice) -> None:
+        """Handle updated data from the device."""
+        self.async_write_ha_state()
+
+
+class GoveeSegmentLightEntity(LightEntity):
+    """Representation of a Govee Light Segment."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, device: GoveeDevice, segment_index: int) -> None:
+        """Initialize the light segment."""
+        self._device = device
+        self._segment_index = segment_index
+        self._attr_unique_id = f"{device.fingerprint}_segment_{segment_index}"
+        self._attr_name = f"Segment {segment_index}"
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device.fingerprint)},
+        )
+
+        self._attr_supported_color_modes = {ColorMode.RGB}
+        self._attr_color_mode = ColorMode.RGB
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if segment is on."""
+        return self._device.segments[self._segment_index - 1].is_on
+
+    @property
+    def rgb_color(self) -> tuple[int, int, int] | None:
+        """Return the rgb color value [int, int, int]."""
+        return self._device.segments[self._segment_index - 1].color
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn the segment on."""
+        if ATTR_RGB_COLOR in kwargs:
+            red, green, blue = kwargs[ATTR_RGB_COLOR]
+            await self._device.set_segment_rgb_color(self._segment_index, red, green, blue)
+        else:
+            # If no color specified, use the last color or default to white
+            color = self.rgb_color
+            if not color or color == (0, 0, 0):
+                color = (255, 255, 255)
+            await self._device.set_segment_rgb_color(self._segment_index, *color)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn the segment off."""
+        await self._device.turn_segment_off(self._segment_index)
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
