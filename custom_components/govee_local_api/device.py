@@ -52,7 +52,7 @@ class GoveeDevice:
         self._is_on: bool = False
         self._rgb_color = (255, 255, 255)
         self._temperature_color = 0
-        self._brightness = 0
+        self._brightness = 100
         self._update_callbacks: list[Callable[[GoveeDevice], None]] = []
         self.is_manual: bool = False
         self._segments: list[GoveeSegment] = [
@@ -118,6 +118,12 @@ class GoveeDevice:
 
     async def turn_on(self) -> None:
         await self._controller.turn_on_off(self, True)
+        await self._controller.set_brightness(self, self._brightness)
+        if self._temperature_color > 0:
+            await self._controller.set_color(self, temperature=self._temperature_color, rgb=None)
+        else:
+            await self._controller.set_color(self, rgb=self._rgb_color, temperature=None)
+            
         self._is_on = True
         for segment in self._segments:
             segment.is_on = True
@@ -157,7 +163,6 @@ class GoveeDevice:
             await self._controller.set_segment_rgb_color(self, segment, rgb)
             await self._controller.set_segment_brightness(self, segment, s_brightness)
 
-            # Turning on a segment also updates the Master state to ON
             if seg.is_on:
                 self._is_on = True
 
@@ -177,9 +182,7 @@ class GoveeDevice:
             await self._controller.set_segment_color_temperature(self, segment, temperature)
             await self._controller.set_segment_brightness(self, segment, seg.brightness)
 
-            # Turning on a segment also updates the Master state to ON
             self._is_on = True
-
             self._trigger_update_callbacks()
 
     async def turn_segment_on(self, segment_index: int) -> None:
@@ -194,6 +197,13 @@ class GoveeDevice:
         await self.set_segment_rgb_color(segment, 0, 0, 0)
 
     async def turn_off(self) -> None:
+        # Send state before turning off to ensure it's synced
+        await self._controller.set_brightness(self, self._brightness)
+        if self._temperature_color > 0:
+            await self._controller.set_color(self, temperature=self._temperature_color, rgb=None)
+        else:
+            await self._controller.set_color(self, rgb=self._rgb_color, temperature=None)
+            
         await self._controller.turn_on_off(self, False)
         self._is_on = False
         for segment in self._segments:
@@ -203,8 +213,6 @@ class GoveeDevice:
     async def set_brightness(self, value: int) -> None:
         await self._controller.set_brightness(self, value)
         self._brightness = value
-        for segment in self._segments:
-            segment.brightness = value
         self._trigger_update_callbacks()
 
     async def set_rgb_color(self, red: int, green: int, blue: int) -> None:
@@ -212,19 +220,11 @@ class GoveeDevice:
         await self._controller.set_color(self, rgb=rgb, temperature=None)
         self._rgb_color = rgb
         self._temperature_color = 0
-        for segment in self._segments:
-            segment.color = rgb
-            segment.temperature = 0
-            segment.is_on = True
         self._trigger_update_callbacks()
 
     async def set_temperature(self, temperature: int) -> None:
         await self._controller.set_color(self, temperature=temperature, rgb=None)
         self._temperature_color = temperature
-        for segment in self._segments:
-            segment.temperature = temperature
-            segment.color = (255, 255, 255)
-            segment.is_on = True
         self._trigger_update_callbacks()
 
     async def set_scene(self, scene: str) -> None:
@@ -234,15 +234,12 @@ class GoveeDevice:
         await self._controller.send_raw_command(self, command)
 
     def update(self, message: DevStatusResponse) -> None:
-        # Update master state only
         self._is_on = message.is_on
         self._brightness = message.brightness
         if message.color != (0, 0, 0):
             self._rgb_color = message.color
         self._temperature_color = message.color_temperature
         
-        # Sync segments with master state ONLY during the first initialization update.
-        # After that, segments are independent during polling to prevent overwriting manual settings.
         if not self._initial_update_done:
             for segment in self._segments:
                 segment.is_on = self._is_on
