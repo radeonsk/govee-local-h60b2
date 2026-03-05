@@ -158,14 +158,11 @@ class GoveeDevice:
         if not any_segment_on:
             return
 
-        # If AT LEAST ONE segment is on, we restore them.
-        # Sending segment commands will turn those specific segments back on.
+        # If AT LEAST ONE segment is on, we let the segment-specific commands
+        # wake the device back up naturally.
         self._is_on = True
         
-        # Ensure segments have full range
-        await self._controller.set_brightness(self, 100)
-        await asyncio.sleep(0.1)
-        
+        # Restore only the active segments
         for i in range(1, len(self._segments) + 1):
             if self._segments[i-1].is_on:
                 await self._send_segment_physical_state(i)
