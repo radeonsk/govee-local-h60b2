@@ -1,0 +1,17 @@
+"""Constants for the Govee Local API integration."""
+
+DOMAIN = "govee_local_api"
+
+CONF_LISTENING_PORT = "listening_port"
+CONF_BROADCAST_PORT = "broadcast_port"
+CONF_COMMAND_PORT = "command_port"
+CONF_DISCOVERY_INTERVAL = "discovery_interval"
+CONF_UPDATE_INTERVAL = "update_interval"
+CONF_EVICT_INTERVAL = "evict_interval"
+
+DEFAULT_LISTENING_PORT = 4002
+DEFAULT_BROADCAST_PORT = 4001
+DEFAULT_COMMAND_PORT = 4003
+DEFAULT_DISCOVERY_INTERVAL = 10
+DEFAULT_UPDATE_INTERVAL = 5
+DEFAULT_EVICT_INTERVAL = 30

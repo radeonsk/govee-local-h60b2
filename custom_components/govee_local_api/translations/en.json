@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Govee Local API",
+        "description": "Configure Govee Local API integration.",
+        "data": {
+          "name": "Integration name"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Service is already configured"
+    }
+  }
+}
