@@ -119,6 +119,8 @@ class GoveeDevice:
     async def turn_on(self) -> None:
         await self._controller.turn_on_off(self, True)
         self._is_on = True
+        for segment in self._segments:
+            segment.is_on = True
         self._trigger_update_callbacks()
 
     async def set_segment_rgb_color(
@@ -187,11 +189,15 @@ class GoveeDevice:
     async def turn_off(self) -> None:
         await self._controller.turn_on_off(self, False)
         self._is_on = False
+        for segment in self._segments:
+            segment.is_on = False
         self._trigger_update_callbacks()
 
     async def set_brightness(self, value: int) -> None:
         await self._controller.set_brightness(self, value)
         self._brightness = value
+        for segment in self._segments:
+            segment.brightness = value
         self._trigger_update_callbacks()
 
     async def set_rgb_color(self, red: int, green: int, blue: int) -> None:
@@ -199,11 +205,19 @@ class GoveeDevice:
         await self._controller.set_color(self, rgb=rgb, temperature=None)
         self._rgb_color = rgb
         self._temperature_color = 0
+        for segment in self._segments:
+            segment.color = rgb
+            segment.temperature = 0
+            segment.is_on = True
         self._trigger_update_callbacks()
 
     async def set_temperature(self, temperature: int) -> None:
         await self._controller.set_color(self, temperature=temperature, rgb=None)
         self._temperature_color = temperature
+        for segment in self._segments:
+            segment.temperature = temperature
+            segment.color = (255, 255, 255)
+            segment.is_on = True
         self._trigger_update_callbacks()
 
     async def set_scene(self, scene: str) -> None:
@@ -213,14 +227,26 @@ class GoveeDevice:
         await self._controller.send_raw_command(self, command)
 
     def update(self, message: DevStatusResponse) -> None:
+        # Check if the global state has changed from what we currently think it is
+        # This allows us to detect external changes (Govee app, physical button)
+        power_changed = self._is_on != message.is_on
+        brightness_changed = self._brightness != message.brightness
+        # Color change check (ignoring black reports)
+        color_changed = False
+        if message.color != (0, 0, 0) and self._rgb_color != message.color:
+            color_changed = True
+        temp_changed = self._temperature_color != message.color_temperature
+        
+        # Update master state
         self._is_on = message.is_on
         self._brightness = message.brightness
         if message.color != (0, 0, 0):
             self._rgb_color = message.color
         self._temperature_color = message.color_temperature
         
-        # Sync segments with master state only during initialization
-        if not self._initial_update_done:
+        # If this is the first update, or if a global change was detected externally,
+        # synchronize all segments to match the new global state.
+        if not self._initial_update_done or power_changed or brightness_changed or color_changed or temp_changed:
             for segment in self._segments:
                 segment.is_on = self._is_on
                 segment.brightness = self._brightness
