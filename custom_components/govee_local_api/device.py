@@ -124,11 +124,13 @@ class GoveeDevice:
         # Determine target brightness (0 if off)
         target_brightness = seg.brightness if seg.is_on else 0
 
-        # Send Color/Temperature to prime physical memory (even if turning off)
-        if seg.temperature > 0:
+        # If OFF, force black color to ensure it physically turns off on H60B2
+        if not seg.is_on:
+            await self._controller.set_segment_rgb_color(self, i, (0, 0, 0))
+        elif seg.temperature > 0:
             await self._controller.set_segment_color_temperature(self, i, seg.temperature)
         else:
-            # Scale RGB by seg.brightness (NOT target_brightness) so we send the actual color, not black
+            # Scale RGB by seg.brightness
             s_red = int(seg.color[0] * seg.brightness / 100)
             s_green = int(seg.color[1] * seg.brightness / 100)
             s_blue = int(seg.color[2] * seg.brightness / 100)
@@ -177,6 +179,18 @@ class GoveeDevice:
         self._is_on = False
         for segment in self._segments:
             segment.is_on = False
+            
+        # Prime physical memory before shutting down
+        if self._temperature_color > 0:
+            await self._controller.set_color(self, temperature=self._temperature_color, rgb=None)
+        else:
+            await self._controller.set_color(self, rgb=self._rgb_color, temperature=None)
+        await asyncio.sleep(0.05)
+        
+        # We also set master physical brightness to 0 as an extra guarantee
+        await self._controller.set_brightness(self, 0)
+        await asyncio.sleep(0.05)
+        
         await self._controller.turn_on_off(self, False)
         self._trigger_update_callbacks()
 
