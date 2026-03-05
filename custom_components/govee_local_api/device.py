@@ -50,10 +50,10 @@ class GoveeDevice:
         self._capabilities: GoveeLightCapabilities = capabilities
 
         self._is_on: bool = False
-        self._rgb_color = (0, 0, 0)
+        self._rgb_color = (255, 255, 255)
         self._temperature_color = 0
         self._brightness = 0
-        self._update_callback: Callable[[GoveeDevice], None] | None = None
+        self._update_callbacks: list[Callable[[GoveeDevice], None]] = []
         self.is_manual: bool = False
         self._segments: list[GoveeSegment] = [
             GoveeSegment(False, (255, 255, 255))
@@ -104,22 +104,21 @@ class GoveeDevice:
     def temperature_color(self) -> int:
         return self._temperature_color
 
-    @property
-    def update_callback(self) -> Callable[[GoveeDevice], None] | None:
-        return self._update_callback
+    def set_update_callback(self, callback: Callable[[GoveeDevice], None]) -> None:
+        """Register a callback to be called when the device state is updated."""
+        if callback not in self._update_callbacks:
+            self._update_callbacks.append(callback)
 
-    def set_update_callback(
-        self, callback: Callable[[GoveeDevice], None] | None
-    ) -> Callable[[GoveeDevice], None] | None:
-        old_callback = self._update_callback
-        self._update_callback = callback
-        return old_callback
+    def _trigger_update_callbacks(self) -> None:
+        """Trigger all registered update callbacks."""
+        for callback in self._update_callbacks:
+            if callable(callback):
+                callback(self)
 
     async def turn_on(self) -> None:
         await self._controller.turn_on_off(self, True)
         self._is_on = True
-        if self._update_callback and callable(self._update_callback):
-            self._update_callback(self)
+        self._trigger_update_callbacks()
 
     async def set_segment_rgb_color(
         self,
@@ -155,8 +154,7 @@ class GoveeDevice:
             await self._controller.set_segment_rgb_color(self, segment, rgb)
             await self._controller.set_segment_brightness(self, segment, s_brightness)
 
-            if self._update_callback and callable(self._update_callback):
-                self._update_callback(self)
+            self._trigger_update_callbacks()
 
     async def set_segment_temperature(
         self, segment: int, temperature: int, brightness: int | None = None
@@ -164,6 +162,7 @@ class GoveeDevice:
         if 0 < segment <= len(self._segments):
             seg = self._segments[segment - 1]
             seg.temperature = temperature
+            seg.color = (255, 255, 255)
             seg.is_on = True
             if brightness is not None:
                 seg.brightness = brightness
@@ -171,8 +170,7 @@ class GoveeDevice:
             await self._controller.set_segment_color_temperature(self, segment, temperature)
             await self._controller.set_segment_brightness(self, segment, seg.brightness)
 
-            if self._update_callback and callable(self._update_callback):
-                self._update_callback(self)
+            self._trigger_update_callbacks()
 
     async def turn_segment_on(self, segment_index: int) -> None:
         if 0 < segment_index <= len(self._segments):
@@ -188,27 +186,24 @@ class GoveeDevice:
     async def turn_off(self) -> None:
         await self._controller.turn_on_off(self, False)
         self._is_on = False
-        if self._update_callback and callable(self._update_callback):
-            self._update_callback(self)
+        self._trigger_update_callbacks()
 
     async def set_brightness(self, value: int) -> None:
         await self._controller.set_brightness(self, value)
         self._brightness = value
-        if self._update_callback and callable(self._update_callback):
-            self._update_callback(self)
+        self._trigger_update_callbacks()
 
     async def set_rgb_color(self, red: int, green: int, blue: int) -> None:
         rgb = (red, green, blue)
         await self._controller.set_color(self, rgb=rgb, temperature=None)
         self._rgb_color = rgb
-        if self._update_callback and callable(self._update_callback):
-            self._update_callback(self)
+        self._temperature_color = 0
+        self._trigger_update_callbacks()
 
     async def set_temperature(self, temperature: int) -> None:
         await self._controller.set_color(self, temperature=temperature, rgb=None)
         self._temperature_color = temperature
-        if self._update_callback and callable(self._update_callback):
-            self._update_callback(self)
+        self._trigger_update_callbacks()
 
     async def set_scene(self, scene: str) -> None:
         await self._controller.set_scene(self, scene)
@@ -219,7 +214,8 @@ class GoveeDevice:
     def update(self, message: DevStatusResponse) -> None:
         self._is_on = message.is_on
         self._brightness = message.brightness
-        self._rgb_color = message.color
+        if message.color != (0, 0, 0):
+            self._rgb_color = message.color
         self._temperature_color = message.color_temperature
         
         # Sync segments with master state during updates (initialization/polling)
@@ -229,15 +225,13 @@ class GoveeDevice:
             segment.brightness = self._brightness
             if self._temperature_color > 0:
                 segment.temperature = self._temperature_color
-                # Avoid (0,0,0) color when in temperature mode to prevent "black" UI state
                 segment.color = (255, 255, 255)
             else:
                 segment.color = self._rgb_color
                 segment.temperature = 0
                 
         self.update_lastseen()
-        if self._update_callback and callable(self._update_callback):
-            self._update_callback(self)
+        self._trigger_update_callbacks()
 
     def update_lastseen(self) -> None:
         self._lastseen = datetime.now()

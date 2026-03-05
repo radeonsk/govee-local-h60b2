@@ -115,6 +115,8 @@ class GoveeLightEntity(LightEntity):
     @property
     def rgb_color(self) -> tuple[int, int, int] | None:
         """Return the rgb color value [int, int, int]."""
+        if self.color_mode == ColorMode.COLOR_TEMP:
+            return None
         return self._device.rgb_color
 
     @property
@@ -199,7 +201,12 @@ class GoveeSegmentLightEntity(LightEntity):
     @property
     def rgb_color(self) -> tuple[int, int, int] | None:
         """Return the rgb color value [int, int, int]."""
-        return self._device.segments[self._segment_index - 1].color
+        if self.color_mode == ColorMode.COLOR_TEMP:
+            return None
+        color = self._device.segments[self._segment_index - 1].color
+        if color == (0, 0, 0):
+            return (255, 255, 255)
+        return color
 
     @property
     def color_temp_kelvin(self) -> int | None:
